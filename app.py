@@ -1,11 +1,8 @@
 from flask import Flask, request, jsonify
 from migrate import run_migrations
 from config import get_db_connection
-from psycopg2 import sql
 import json
 from datetime import datetime, date
-
-# 🔥 Запускаем мигратор ПЕРЕД созданием приложения
 run_migrations()
 
 app = Flask(__name__)
@@ -96,8 +93,8 @@ def get_subscriptions():
 @app.route('/subscriptions/<int:sub_id>', methods=['PUT'])
 def update_subscription(sub_id):
     data = request.get_json(force=True)
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+    updates = {}
+    recalculate_next_charge = False
 
     conn = get_db_connection()
     try:
@@ -108,67 +105,55 @@ def update_subscription(sub_id):
             result = cur.fetchone()
             if not result:
                 return jsonify({"error": "Subscription not found"}), 404
-            user_id, start_date, old_periodicity = result
-
-        # Собираем обновления
-        updates = {}
-        recalculate_date = False
+            current_user_id, current_start_date, current_periodicity = result
 
         if 'amount' in data:
             updates['amount'] = float(data['amount'])
 
         if 'periodicity' in data:
-            new_p = data['periodicity']
-            if new_p not in ('monthly', 'yearly'):
+            new_periodicity = data['periodicity']
+            if new_periodicity not in ('monthly', 'yearly'):
                 return jsonify({"error": "Invalid periodicity"}), 400
-            updates['periodicity'] = new_p
-            if new_p != old_periodicity:
-                recalculate_date = True
+            updates['periodicity'] = new_periodicity
+            if new_periodicity != current_periodicity:
+                recalculate_next_charge = True
 
         if 'next_charge_date' in data:
             try:
                 updates['next_charge_date'] = datetime.strptime(data['next_charge_date'], "%Y-%m-%d").date()
-                recalculate_date = False
+                recalculate_next_charge = False
             except ValueError:
                 return jsonify({"error": "Invalid date format"}), 400
 
         if not updates:
             return jsonify({"error": "No fields to update"}), 400
 
-        # Пересчёт даты
-        if recalculate_date:
-            if updates.get('periodicity', old_periodicity) == 'monthly':
+        if recalculate_next_charge:
+            start_date = current_start_date
+            new_periodicity = updates.get('periodicity', current_periodicity)
+            if new_periodicity == 'monthly':
                 if start_date.month == 12:
-                    next_date = date(start_date.year + 1, 1, start_date.day)
+                    next_charge = date(start_date.year + 1, 1, start_date.day)
                 else:
-                    next_date = date(start_date.year, start_date.month + 1, start_date.day)
+                    next_charge = date(start_date.year, start_date.month + 1, start_date.day)
             else:
-                next_date = date(start_date.year + 1, start_date.month, start_date.day)
-            updates['next_charge_date'] = next_date
+                next_charge = date(start_date.year + 1, start_date.month, start_date.day)
+            updates['next_charge_date'] = next_charge
 
-        # Безопасное формирование запроса
-        set_parts = []
-        for k in updates.keys():
-            set_parts.append(sql.Identifier(k) + sql.SQL(" = %s"))
-        set_clause = sql.SQL(", ").join(set_parts)
-        query = sql.SQL("UPDATE subscriptions SET {} WHERE id = %s").format(set_clause)
-
+        set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
         values = list(updates.values()) + [sub_id]
-
-        cur.execute(query, values)
-
-        # Логируем
-        cur.execute("""
-            INSERT INTO audit_log (user_id, action, entity, entity_id, details)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (user_id, "update", "subscription", sub_id, json.dumps(updates)))
-
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE subscriptions SET {set_clause} WHERE id = %s", values) # nosec B608
+            cur.execute("""
+                INSERT INTO audit_log (user_id, action, entity, entity_id, details)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (current_user_id, "update", "subscription", sub_id, json.dumps(updates)))
         conn.commit()
         return jsonify({"message": "Updated"}), 200
 
     except Exception as e:
         conn.rollback()
-        return jsonify({"error": "Internal error"}), 500
+        return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
 
