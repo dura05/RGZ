@@ -58,4 +58,6 @@ def get_db():
 # === МИГРАТОР ЗАПУСКАЕТСЯ ТОЛЬКО ПРИ ПРЯМОМ ЗАПУСКЕ ===
 if __name__ == '__main__':
     run_migrations()
-    app.run(debug=True)
+    # Отключаем debug в CI и production
+    debug_mode = os.getenv("FLASK_DEBUG", "False").lower() == "true"
+    app.run(debug=debug_mode)
