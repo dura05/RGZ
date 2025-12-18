@@ -12,7 +12,7 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_PASSWORD: testpass
-          POSTGRES_DB: subscription_db
+          POSTGRES_DB: subscription_test
         ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready
@@ -22,19 +22,26 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+
     - name: Install dependencies
-      run: pip install -r requirements.txt
-    - name: Run bandit
-      run: bandit -r .
+      run: |
+        pip install -r requirements.txt
+
+    - name: Run bandit security scan
+      run: |
+        bandit -r .
+
     - name: Run tests
       env:
         DB_HOST: localhost
         DB_PORT: 5432
-        DB_NAME: subscription_db
+        DB_NAME: subscription_test
         DB_USER: postgres
         DB_PASSWORD: testpass
-      run: python -m pytest
+      run: |
+        python -m pytest
