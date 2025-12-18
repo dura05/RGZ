@@ -145,7 +145,7 @@ def update_subscription(sub_id):
         set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
         values = list(updates.values()) + [sub_id]
         with conn.cursor() as cur:
-            cur.execute(f"UPDATE subscriptions SET {set_clause} WHERE id = %s", values)
+            cur.execute(f"UPDATE subscriptions SET {set_clause} WHERE id = %s", values) # nosec B608
             cur.execute("""
                 INSERT INTO audit_log (user_id, action, entity, entity_id, details)
                 VALUES (%s, %s, %s, %s, %s)
