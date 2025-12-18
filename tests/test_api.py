@@ -3,7 +3,7 @@ os.environ['DB_HOST'] = 'localhost'
 os.environ['DB_PORT'] = '5432'
 os.environ['DB_NAME'] = 'subscription_test'
 os.environ['DB_USER'] = 'postgres'
-os.environ['DB_PASSWORD'] = 'testpass'
+os.environ.setdefault('DB_PASSWORD', 'testpass')
 
 import pytest
 import json
@@ -42,23 +42,37 @@ def test_full_subscription_lifecycle(client):
     user_id = _create_user("lifecycle@example.com")
 
     # Создание
-    resp = client.post('/subscriptions', json={...})
-    assert resp.status_code == 201
+    resp = client.post('/subscriptions', json={
+        'user_id': user_id,
+        'name': 'TestService',
+        'amount': 9.99,
+        'periodicity': 'monthly',
+        'start_date': '2025-01-01'
+    })
+    if resp.status_code != 201:
+        raise AssertionError(f"Expected 201 on creation, got {resp.status_code}")
 
     # Чтение
     resp = client.get(f'/subscriptions?user_id={user_id}')
-    assert resp.status_code == 200
-    assert len(json.loads(resp.data)) == 1
+    if resp.status_code != 200:
+        raise AssertionError(f"Expected 200 on GET, got {resp.status_code}")
+    subs = json.loads(resp.data)
+    if len(subs) != 1:
+        raise AssertionError(f"Expected 1 subscription, got {len(subs)}")
 
     # Обновление
-    sub_id = json.loads(resp.data)[0]['id']
+    sub_id = subs[0]['id']
     resp = client.put(f'/subscriptions/{sub_id}', json={'amount': 19.99})
-    assert resp.status_code == 200
+    if resp.status_code != 200:
+        raise AssertionError(f"Expected 200 on update, got {resp.status_code}")
 
     # Удаление
     resp = client.delete(f'/subscriptions/{sub_id}')
-    assert resp.status_code == 200
+    if resp.status_code != 200:
+        raise AssertionError(f"Expected 200 on deletion, got {resp.status_code}")
 
     # Проверка удаления
     resp = client.get(f'/subscriptions?user_id={user_id}')
-    assert len(json.loads(resp.data)) == 0
+    subs_after = json.loads(resp.data)
+    if len(subs_after) != 0:
+        raise AssertionError(f"Expected 0 subscriptions after deletion, got {len(subs_after)}")
