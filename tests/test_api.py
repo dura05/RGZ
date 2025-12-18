@@ -3,7 +3,10 @@ os.environ['DB_HOST'] = 'localhost'
 os.environ['DB_PORT'] = '5432'
 os.environ['DB_NAME'] = 'subscription_test'
 os.environ['DB_USER'] = 'postgres'
-os.environ.setdefault('DB_PASSWORD', 'testpass')
+db_password = os.environ.get('DB_PASSWORD')
+if not db_password:
+    raise RuntimeError("DB_PASSWORD must be set")
+os.environ['DB_PASSWORD'] = db_password
 
 import pytest
 import json
@@ -31,10 +34,23 @@ def _create_user(email="test@example.com"):
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO users (email) VALUES (%s) ON CONFLICT (email) DO NOTHING", (email,))
-            cur.execute("SELECT id FROM users WHERE email = %s", (email,))
-            return cur.fetchone()[0]
+            # Вставляем пользователя
+            cur.execute(
+                "INSERT INTO users (email) VALUES (%s) ON CONFLICT (email) DO NOTHING RETURNING id",
+                (email,)
+            )
+            result = cur.fetchone()
+            if result:
+                user_id = result[0]
+            else:
+                # Если уже есть — получаем id
+                cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+                user_id = cur.fetchone()[0]
         conn.commit()
+        return user_id
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -61,7 +77,7 @@ def test_full_subscription_lifecycle(client):
         raise AssertionError(f"Expected 1 subscription, got {len(subs)}")
 
     # Обновление
-    sub_id = subs[0]['id']
+    sub_id = subs[0]['id'] 
     resp = client.put(f'/subscriptions/{sub_id}', json={'amount': 19.99})
     if resp.status_code != 200:
         raise AssertionError(f"Expected 200 on update, got {resp.status_code}")
